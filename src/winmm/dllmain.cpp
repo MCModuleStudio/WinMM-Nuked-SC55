@@ -527,8 +527,8 @@ Emulator emu;
 
 UINT uMSGSDevID = -1;
 HMIDIOUT hMSGSDev = nullptr;
-DWORD_PTR pCallback = NULL;
-DWORD_PTR pCallbackInstance = NULL;
+DWORD_PTR pCallback = 0;
+DWORD_PTR pCallbackInstance = 0;
 DWORD dwCallbackFlags;
 
 void ExecuteMidiCallback(DWORD_PTR dwCallback, DWORD_PTR dwInstance, HMIDIOUT hMidi, UINT msg, DWORD_PTR dwParam1, DWORD_PTR dwParam2, DWORD fdwOpen) {
@@ -563,11 +563,14 @@ void ExecuteMidiCallback(DWORD_PTR dwCallback, DWORD_PTR dwInstance, HMIDIOUT hM
 }
 
 extern "C" {
-    BOOL WINAPI DllMain    (HINSTANCE, DWORD, LPVOID);
-    MMRESULT midiOutOpen   (LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen);
-    MMRESULT midiOutClose  (HMIDIOUT hmo);
-    MMRESULT midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh);
-    MMRESULT midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2);
+    BOOL WINAPI DllMain             (HINSTANCE, DWORD, LPVOID);
+    WINAPI MMRESULT midiOutOpen     (LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen);
+    WINAPI MMRESULT midiOutClose    (HMIDIOUT hmo);
+    WINAPI MMRESULT midiOutShortMsg (HMIDIOUT hmo, DWORD dwMsg);
+    WINAPI MMRESULT midiOutLongMsg  (HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh);
+    WINAPI MMRESULT midiOutMessage  (HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2);
+    WINAPI MMRESULT midiOutReset    (HMIDIOUT hmo);
+    WINAPI MMRESULT midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume);
 }
 
 MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen) {
@@ -575,8 +578,8 @@ MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWOR
         pCallback = dwCallback;
         pCallbackInstance = dwInstance;
         dwCallbackFlags = fdwOpen;
-        dwCallback = NULL;
-        dwInstance = NULL;
+        dwCallback = 0;
+        dwInstance = 0;
         fdwOpen = CALLBACK_NULL;
     }
     MMRESULT result = pmidiOutOpen(phmo, uDeviceID, dwCallback, dwInstance, fdwOpen);
@@ -647,7 +650,7 @@ MMRESULT midiOutShortMsg(HMIDIOUT hmo, DWORD dwMsg) {
 MMRESULT midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
-        g_emulator->PostMIDI(std::span(reinterpret_cast<const uint8_t*>(pmh->lpData), pmh->dwBytesRecorded));
+        g_emulator->PostMIDI(std::span(reinterpret_cast<const uint8_t*>(pmh->lpData), pmh->dwBufferLength));
         pmh->dwFlags |= MHDR_DONE;
         ExecuteMidiCallback(pCallback, pCallbackInstance, hMSGSDev, MOM_DONE, (DWORD_PTR) pmh, 0, dwCallbackFlags);
         result = MMSYSERR_NOERROR;
