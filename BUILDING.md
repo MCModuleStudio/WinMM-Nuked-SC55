@@ -43,6 +43,12 @@ SDL2, and optionally rtmidi (only when `-DUSE_RTMIDI=ON`).
 
 cmake is expecting to find `<path>/SDL2-X.YY.Z/cmake/sdl2-config.cmake`.
 
+Unfortunately, this branch currently only builds with MinGW-w64 on Windows.
+MSVC's parsing of the export definition file is too strict for the forwarding
+export style used here, so linking fails under MSVC even though the operating
+system itself supports this forwarding export style.
+
+
 For builds in an msys2 environment, installing SDL2 via pacman should be
 enough.
 

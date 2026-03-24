@@ -220,6 +220,31 @@ target_enable_warnings(nuked-sc55-render)
 target_enable_conversion_warnings(nuked-sc55-render)
 
 #==============================================================================
+# WinMM Frontend
+#==============================================================================
+if(WIN32 AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+    add_library(nuked-sc55-winmm SHARED)
+    target_sources(nuked-sc55-winmm
+        PRIVATE
+        src/winmm/dllmain.cpp
+        src/winmm/export.def
+    )
+    target_link_libraries(nuked-sc55-winmm
+        PRIVATE
+        nuked-sc55-backend
+        nuked-sc55-common
+    )
+    target_link_options(nuked-sc55-winmm PRIVATE -static-libgcc -static-libstdc++)
+    target_compile_features(nuked-sc55-winmm PRIVATE cxx_std_23)
+    target_enable_warnings(nuked-sc55-winmm)
+    target_enable_conversion_warnings(nuked-sc55-winmm)
+
+    install(TARGETS nuked-sc55-winmm)
+elseif(WIN32)
+    message(STATUS "nuked-sc55-winmm is only enabled for GNU (MinGW) on Windows")
+endif()
+
+#==============================================================================
 # Installables
 #==============================================================================
 install(TARGETS nuked-sc55-render)
