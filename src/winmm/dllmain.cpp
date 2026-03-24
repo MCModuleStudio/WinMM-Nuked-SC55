@@ -527,6 +527,40 @@ Emulator emu;
 
 UINT uMSGSDevID = -1;
 HMIDIOUT hMSGSDev = nullptr;
+DWORD_PTR pCallback = NULL;
+DWORD_PTR pCallbackInstance = NULL;
+DWORD dwCallbackFlags;
+
+void ExecuteMidiCallback(DWORD_PTR dwCallback, DWORD_PTR dwInstance, HMIDIOUT hMidi, UINT msg, DWORD_PTR dwParam1, DWORD_PTR dwParam2, DWORD fdwOpen) {
+    if (!dwCallback) return;
+
+    switch (fdwOpen & CALLBACK_TYPEMASK) {
+        case CALLBACK_FUNCTION:
+            ((DRVCALLBACK*)dwCallback)(
+                (HDRVR)hMidi, 
+                msg, 
+                dwInstance, 
+                dwParam1, 
+                dwParam2
+            );
+            break;
+
+        case CALLBACK_WINDOW:
+            PostMessage((HWND)dwCallback, msg, (WPARAM)hMidi, (LPARAM)dwParam1);
+            break;
+
+        case CALLBACK_THREAD:
+            PostThreadMessage((DWORD)dwCallback, msg, (WPARAM)hMidi, (LPARAM)dwParam1);
+            break;
+
+        case CALLBACK_EVENT:
+            SetEvent((HANDLE)dwCallback);
+            break;
+
+        default:
+            break;
+    }
+}
 
 extern "C" {
     BOOL WINAPI DllMain    (HINSTANCE, DWORD, LPVOID);
@@ -537,6 +571,14 @@ extern "C" {
 }
 
 MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen) {
+    if (uDeviceID == MIDI_MAPPER || uDeviceID == uMSGSDevID) {
+        pCallback = dwCallback;
+        pCallbackInstance = dwInstance;
+        dwCallbackFlags = fdwOpen;
+        dwCallback = NULL;
+        dwInstance = NULL;
+        fdwOpen = CALLBACK_NULL;
+    }
     MMRESULT result = pmidiOutOpen(phmo, uDeviceID, dwCallback, dwInstance, fdwOpen);
     std::fprintf(stderr, "[WinMM] midiOutOpen(uDeviceID = %d)\n", uDeviceID);
     if (result == MMSYSERR_NOERROR && (uDeviceID == MIDI_MAPPER || uDeviceID == uMSGSDevID)) {
@@ -545,6 +587,8 @@ MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWOR
                 pmidiOutClose(*phmo);
                 *phmo = nullptr;
                 result = MMSYSERR_INVALPARAM;
+            } else {
+                ExecuteMidiCallback(pCallback, pCallbackInstance, hMSGSDev, MOM_OPEN, 0, 0, dwCallbackFlags);
             }
         }
         hMSGSDev = *phmo;
@@ -557,6 +601,7 @@ MMRESULT midiOutClose(HMIDIOUT hmo) {
     if (hMSGSDev != nullptr && hMSGSDev == hmo) {
         hMSGSDev  = nullptr;
         NukedSC55Stop();
+        ExecuteMidiCallback(pCallback, pCallbackInstance, hMSGSDev, MOM_CLOSE, 0, 0, dwCallbackFlags);
     }
     return result;
 }
@@ -603,6 +648,8 @@ MMRESULT midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
         g_emulator->PostMIDI(std::span(reinterpret_cast<const uint8_t*>(pmh->lpData), pmh->dwBytesRecorded));
+        pmh->dwFlags |= MHDR_DONE;
+        ExecuteMidiCallback(pCallback, pCallbackInstance, hMSGSDev, MOM_DONE, (DWORD_PTR) pmh, 0, dwCallbackFlags);
         result = MMSYSERR_NOERROR;
     } else {
         result = pmidiOutLongMsg(hmo, pmh, cbmh);
