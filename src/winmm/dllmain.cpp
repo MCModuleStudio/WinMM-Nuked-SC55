@@ -82,6 +82,7 @@ struct WinmmAudioOutput {
     size_t active_buffer = 0;
     size_t write_pos = 0; // samples (interleaved LR)
     uint16_t lvolume = 0xFFFF, rvolume = 0xFFFF;
+    DWORD volume;
 
     static void LogWaveError(const char* op, MMRESULT result) {
         char text[MAXERRORLENGTH] = {};
@@ -469,7 +470,13 @@ bool CreateEmulator(HINSTANCE module) {
 }
 
 void WorkerLoop() {
-        while (g_worker_running.load(std::memory_order_acquire)) {
+    // Boot up
+    // for (int i = 0; i < 24000000; i++) {
+    //     g_emulator->Step();
+    // }
+    // g_emulator->SetSampleCallback(WinmmSampleCallback, &g_audio);
+    std::fprintf(stderr, "[Nuked-SC55] Emulator started\n");
+    while (g_worker_running.load(std::memory_order_acquire)) {
         if (!g_emulator_ready || !g_emulator) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
@@ -563,7 +570,7 @@ void ExecuteMidiCallback(DWORD_PTR dwCallback, DWORD_PTR dwInstance, HMIDIOUT hM
 }
 
 extern "C" {
-    BOOL WINAPI DllMain             (HINSTANCE, DWORD, LPVOID);
+    WINAPI BOOL     DllMain         (HINSTANCE, DWORD, LPVOID);
     WINAPI MMRESULT midiOutOpen     (LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen);
     WINAPI MMRESULT midiOutClose    (HMIDIOUT hmo);
     WINAPI MMRESULT midiOutShortMsg (HMIDIOUT hmo, DWORD dwMsg);
@@ -673,11 +680,15 @@ MMRESULT midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2) {
 MMRESULT midiOutReset(HMIDIOUT hmo) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
+        // std::fprintf(stderr, "[WinMM] midiOutReset()\n");
+        for (size_t i = 0; i < uart_buffer_size; i++) { // Flush buffers
+            g_emulator->PostMIDI(0xFE); // Send Active sense
+        }
         for (uint8_t i = 0; i < 16; i++) {
             g_emulator->PostMIDI(0xB0 | i);
             g_emulator->PostMIDI(0x78);
             g_emulator->PostMIDI(0x00);
-            g_emulator->PostMIDI(0xB0 | i);
+            // g_emulator->PostMIDI(0xB0 | i);
             g_emulator->PostMIDI(0x7B);
             g_emulator->PostMIDI(0x00);
         }
@@ -693,8 +704,10 @@ static inline uint16_t toLogarithm(int32_t volume) {
 }
 
 MMRESULT midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume) {
+    // std::fprintf(stderr, "[WinMM] midiOutSetVolume(dwVolume = %08lx)\n", dwVolume);
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
+        g_audio.volume  = dwVolume;
         g_audio.lvolume = toLogarithm((dwVolume >>  0) & 0xFFFF);
         g_audio.rvolume = toLogarithm((dwVolume >> 16) & 0xFFFF);
         result = MMSYSERR_NOERROR;

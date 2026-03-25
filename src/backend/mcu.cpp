@@ -952,6 +952,15 @@ void MCU_Step(mcu_t& mcu)
 void MCU_PatchROM(mcu_t& mcu)
 {
     (void)mcu;
+    if (mcu.romset == Romset::MK2 || (mcu.romset == Romset::SC155MK2)) {
+        // HACK: Remove boot animation on SC-55mkII
+        // trapa #1 -> nop nop
+        mcu.rom2[0x6713] = 0x00;
+        mcu.rom2[0x6714] = 0x00;
+        // trapa #0 -> nop nop
+        mcu.rom2[0x6717] = 0x00;
+        mcu.rom2[0x6718] = 0x00;
+    }
     //rom2[0x1333] = 0x11;
     //rom2[0x1334] = 0x19;
     //rom1[0x622d] = 0x19;
