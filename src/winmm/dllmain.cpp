@@ -53,6 +53,10 @@ waveOutWriteProc           pwaveOutWrite           = nullptr;
 waveOutResetProc           pwaveOutReset           = nullptr;
 waveOutGetErrorTextAProc   pwaveOutGetErrorTextA   = nullptr;
 
+#define GetTimeMS() std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count()
+
+int64_t last_active_time;
+
 // I don't know C++ BTW
 // So codes in this namespace are vibe coded
 namespace {
@@ -66,6 +70,8 @@ struct WinmmConfig {
     EMU_SystemReset system_reset = EMU_SystemReset::NONE;
     uint32_t audio_buffer_frames = 1024;
 };
+
+void SetEmulatorPaused(bool paused);
 
 struct WinmmAudioOutput {
     static constexpr size_t kBufferCount = 4;
@@ -147,6 +153,14 @@ struct WinmmAudioOutput {
         if (write_pos < buf.size()) {
             return;
         }
+
+        // Update last active time in every buffer submits
+        int64_t now = GetTimeMS();
+        int16_t level = (int16_t) (((int32_t) out.left + (int32_t) out.right) >> 1);
+        if (level > 1024)
+            last_active_time = now;
+        else if ((now - last_active_time) > 1000LL)
+            SetEmulatorPaused(true);
 
         if (!SubmitBuffer(active_buffer)) {
             return;
@@ -255,8 +269,18 @@ std::unique_ptr<Emulator> g_emulator;
 WinmmAudioOutput g_audio;
 std::thread g_worker_thread;
 std::atomic_bool g_worker_running = false;
+std::atomic_bool g_emulator_paused = false;
 bool g_emulator_ready = false;
 std::mutex g_runtime_mutex;
+
+void SetEmulatorPaused(bool paused) {
+    if (g_emulator_paused.exchange(paused, std::memory_order_release) != paused) {
+        if (paused)
+            std::fprintf(stderr, "[Nuked-SC55] Emulator paused\n");
+        else
+            std::fprintf(stderr, "[Nuked-SC55] Emulator resumed\n");
+    }
+}
 
 void WinmmSampleCallback(void* userdata, const AudioFrame<int32_t>& frame) {
     auto* out = static_cast<WinmmAudioOutput*>(userdata);
@@ -470,6 +494,7 @@ bool CreateEmulator(HINSTANCE module) {
 }
 
 void WorkerLoop() {
+    SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_ABOVE_NORMAL);
     // Boot up
     // for (int i = 0; i < 24000000; i++) {
     //     g_emulator->Step();
@@ -477,7 +502,7 @@ void WorkerLoop() {
     // g_emulator->SetSampleCallback(WinmmSampleCallback, &g_audio);
     std::fprintf(stderr, "[Nuked-SC55] Emulator started\n");
     while (g_worker_running.load(std::memory_order_acquire)) {
-        if (!g_emulator_ready || !g_emulator) {
+        if (!g_emulator_ready || !g_emulator || g_emulator_paused.load(std::memory_order_acquire)) {
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
             continue;
         }
@@ -580,7 +605,7 @@ extern "C" {
     WINAPI MMRESULT midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume);
 }
 
-MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen) {
+WINAPI MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWORD_PTR dwInstance, DWORD fdwOpen) {
     if (uDeviceID == MIDI_MAPPER || uDeviceID == uMSGSDevID) {
         pCallback = dwCallback;
         pCallbackInstance = dwInstance;
@@ -606,7 +631,7 @@ MMRESULT midiOutOpen(LPHMIDIOUT phmo, UINT uDeviceID, DWORD_PTR dwCallback, DWOR
     return result;
 }
 
-MMRESULT midiOutClose(HMIDIOUT hmo) {
+WINAPI MMRESULT midiOutClose(HMIDIOUT hmo) {
     MMRESULT result = pmidiOutClose(hmo);
     if (hMSGSDev != nullptr && hMSGSDev == hmo) {
         hMSGSDev  = nullptr;
@@ -616,9 +641,11 @@ MMRESULT midiOutClose(HMIDIOUT hmo) {
     return result;
 }
 
-MMRESULT midiOutShortMsg(HMIDIOUT hmo, DWORD dwMsg) {
+WINAPI MMRESULT midiOutShortMsg(HMIDIOUT hmo, DWORD dwMsg) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
+        last_active_time = GetTimeMS();
+        SetEmulatorPaused(false);
         uint8_t b1 = dwMsg & 0xff;
         switch (b1 & 0xf0)
         {
@@ -654,9 +681,11 @@ MMRESULT midiOutShortMsg(HMIDIOUT hmo, DWORD dwMsg) {
     return result;
 }
 
-MMRESULT midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh) {
+WINAPI MMRESULT midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
+        last_active_time = GetTimeMS();
+        SetEmulatorPaused(false);
         g_emulator->PostMIDI(std::span(reinterpret_cast<const uint8_t*>(pmh->lpData), pmh->dwBufferLength));
         pmh->dwFlags |= MHDR_DONE;
         ExecuteMidiCallback(pCallback, pCallbackInstance, hMSGSDev, MOM_DONE, (DWORD_PTR) pmh, 0, dwCallbackFlags);
@@ -667,7 +696,7 @@ MMRESULT midiOutLongMsg(HMIDIOUT hmo, LPMIDIHDR pmh, UINT cbmh) {
     return result;
 }
 
-MMRESULT midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2) {
+WINAPI MMRESULT midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
         result = MMSYSERR_NOERROR;
@@ -677,7 +706,7 @@ MMRESULT midiOutMessage(HMIDIOUT hmo, UINT uMsg, DWORD_PTR dw1, DWORD_PTR dw2) {
     return result;
 }
 
-MMRESULT midiOutReset(HMIDIOUT hmo) {
+WINAPI MMRESULT midiOutReset(HMIDIOUT hmo) {
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
         // std::fprintf(stderr, "[WinMM] midiOutReset()\n");
@@ -703,7 +732,7 @@ static inline uint16_t toLogarithm(int32_t volume) {
     return (uint16_t)((volume * volume) >> 16);
 }
 
-MMRESULT midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume) {
+WINAPI MMRESULT midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume) {
     // std::fprintf(stderr, "[WinMM] midiOutSetVolume(dwVolume = %08lx)\n", dwVolume);
     MMRESULT result;
     if (hMSGSDev != nullptr && hmo == hMSGSDev) {
@@ -717,7 +746,7 @@ MMRESULT midiOutSetVolume(HMIDIOUT hmo, DWORD dwVolume) {
     return result;
 }
 
-BOOL WINAPI DllMain(HINSTANCE handle, DWORD dword, LPVOID lpvoid) {
+WINAPI BOOL DllMain(HINSTANCE handle, DWORD dword, LPVOID lpvoid) {
     (void) lpvoid;
     switch(dword) {
         case DLL_PROCESS_ATTACH:
