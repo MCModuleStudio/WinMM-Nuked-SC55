@@ -35,7 +35,6 @@
 #include "mcu.h"
 #include "mcu_interrupt.h"
 #include <cstdint>
-#include <cstdio>
 #include <cstring>
 
 uint8_t PCM_ReadROM(pcm_t& pcm, uint32_t address)
