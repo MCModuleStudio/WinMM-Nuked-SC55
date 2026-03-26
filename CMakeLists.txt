@@ -56,6 +56,7 @@ add_library(nuked-sc55-backend)
 target_sources(nuked-sc55-backend
     PRIVATE
     src/backend/config.cpp
+    src/backend/diagnostics.cpp
     src/backend/emu.cpp
     src/backend/lcd.cpp
     src/backend/mcu.cpp
@@ -80,6 +81,7 @@ target_sources(nuked-sc55-backend
     src/backend/audio.h
     src/backend/bounded_ordered_bitset.h
     src/backend/cast.h
+    src/backend/diagnostics.h
     src/backend/emu.h
     src/backend/lcd.h
     src/backend/lcd_back.h
